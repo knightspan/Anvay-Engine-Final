@@ -1,5 +1,8 @@
 # API keys — NEVER commit
-backend/.env
+.env
+.env.*
+!.env.example
+
 
 # Python
 backend/venv/
