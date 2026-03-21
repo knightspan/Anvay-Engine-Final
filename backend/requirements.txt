@@ -1,0 +1,3 @@
+cd E:\ontooo\anvay\backend
+venv\Scripts\activate
+pip freeze > requirements.txt

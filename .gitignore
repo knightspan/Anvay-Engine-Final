@@ -1,0 +1,18 @@
+# API keys — NEVER commit
+backend/.env
+
+# Python
+backend/venv/
+backend/__pycache__/
+backend/rag/__pycache__/
+backend/pipeline/__pycache__/
+backend/ingestors/__pycache__/
+**/*.pyc
+
+# Node
+frontend/anvay-dashboard/node_modules/
+frontend/anvay-dashboard/dist/
+
+# OS
+.DS_Store
+Thumbs.db
