@@ -8,7 +8,7 @@ load_dotenv()
 URI  = os.getenv("NEO4J_URI",      "neo4j://127.0.0.1:7687")
 USER = os.getenv("NEO4J_USER",     "neo4j")
 PASS = os.getenv("NEO4J_PASSWORD", "anvay2025")
-DB   = "anvay"
+DB   = "neo4j"
 
 driver = GraphDatabase.driver(URI, auth=(USER, PASS))
 

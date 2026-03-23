@@ -1,23 +1,22 @@
 # backend/main.py
-import os
-import json
-import asyncio
-import base64
+import os, json, asyncio, base64, requests, time
 from fastapi import FastAPI, WebSocket, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 from neo4j import GraphDatabase
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from sarvam_client import SarvamClient
 from rag.orchestrator import run_query
 
-load_dotenv()
+load_dotenv(find_dotenv(), override=True)
 
 URI = os.getenv("NEO4J_URI",      "neo4j://127.0.0.1:7687")
+
+
 USER = os.getenv("NEO4J_USER",     "neo4j")
 PASS = os.getenv("NEO4J_PASSWORD", "anvay2025")
-DB = "anvay"
+DB = "neo4j"
 
 app = FastAPI(title="ANVAY Intelligence API", version="1.0.0")
 app.add_middleware(
@@ -289,7 +288,126 @@ async def jarvis_full(payload: JarvisPayload):
         "language":  payload.language
     }
 
+# ── ACLED PROXY ───────────────────────────────────────────────────
+
+ACLED_TOKEN = None
+ACLED_TOKEN_EXPIRY = 0
+
+def get_acled_token():
+    global ACLED_TOKEN, ACLED_TOKEN_EXPIRY
+    email = os.getenv("ACLED_EMAIL")
+    password = os.getenv("ACLED_PASSWORD")
+    if not email or not password:
+        return None
+    
+    # Simple caching for token (ACLED tokens usually last 1 hour)
+    if ACLED_TOKEN and time.time() < ACLED_TOKEN_EXPIRY:
+        return ACLED_TOKEN
+
+    try:
+        r = requests.post("https://acleddata.com/oauth/token", 
+            data={
+                "username": email,
+                "password": password,
+                "grant_type": "password",
+                "client_id": "acled"
+            }, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        ACLED_TOKEN = data.get("access_token")
+        ACLED_TOKEN_EXPIRY = time.time() + 3500 # 1 hour approx
+        return ACLED_TOKEN
+    except Exception as e:
+        print(f"ACLED Token Error: {e}")
+        return None
+
+@app.get("/api/acled")
+async def get_acled_data():
+    token = get_acled_token()
+    if not token:
+        # Fallback to demo data if ACLED authentication fails or is blocked
+        print("ACLED Auth failed. Using Demo Data.")
+        return [
+            {"lat": 33.7, "lng": 76.3, "name": "LAC Tension Zone — Eastern Ladakh", "domain": "defence", "sev": 0.82, "detail": "PLA exercise + India LAC standoff 2026"},
+            {"lat": 24.8, "lng": 62.0, "name": "CPEC Phase III — Gwadar", "domain": "geopolitics", "sev": 0.75, "detail": "$15 billion infrastructure investment"},
+            {"lat": 28.6, "lng": 77.2, "name": "Food Price Protests — Delhi", "domain": "society", "sev": 0.61, "detail": "Civil unrest over wheat inflation"},
+            {"lat": 32.5, "lng": 74.5, "name": "LoC Ceasefire Violations", "domain": "defence", "sev": 0.82, "detail": "17 incidents in Feb 2026"},
+            {"lat": 30.7, "lng": 79.0, "name": "Depsang LAC Standoff", "domain": "defence", "sev": 0.77, "detail": "India-China military face-off"},
+            {"lat": 18.5, "lng": 73.8, "name": "Maharashtra Food Protests", "domain": "society", "sev": 0.71, "detail": "6 border districts — police deployed"}
+        ]
+
+    params = {
+        "country": "India:OR:country=Pakistan:OR:country=China",
+        "year": "2026",
+        "limit": "400",
+        "_format": "json"
+    }
+    
+    try:
+        r = requests.get("https://acleddata.com/api/acled/read", 
+            params=params, 
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=15)
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        
+        EVENT_DOMAIN_MAP = {
+            "Battles": "defence",
+            "Violence against civilians": "society",
+            "Explosions/Remote violence": "defence",
+            "Protests": "society",
+            "Riots": "society",
+            "Strategic developments": "geopolitics"
+        }
+        
+        mapped = []
+        for row in data:
+            try:
+                fatalities = int(row.get("fatalities", 0))
+                severity = min(1.0, fatalities / 50.0)
+                mapped.append({
+                    "lat": float(row.get("latitude")),
+                    "lng": float(row.get("longitude")),
+                    "name": row.get("location"),
+                    "domain": EVENT_DOMAIN_MAP.get(row.get("event_type"), "default"),
+                    "sev": severity,
+                    "detail": (row.get("notes") or row.get("event_type"))[:120]
+                })
+            except: continue
+            
+        return mapped
+    except Exception as e:
+        # Fallback to demo data on API error as well
+        print(f"ACLED API error: {e}. Using Demo Data.")
+        return [
+            {"lat": 33.7, "lng": 76.3, "name": "LAC Tension Zone — Eastern Ladakh", "domain": "defence", "sev": 0.82, "detail": "PLA exercise + India LAC standoff 2026"},
+            {"lat": 24.8, "lng": 62.0, "name": "CPEC Phase III — Gwadar", "domain": "geopolitics", "sev": 0.75, "detail": "$15 billion infrastructure investment"},
+            {"lat": 28.6, "lng": 77.2, "name": "Food Price Protests — Delhi", "domain": "society", "sev": 0.61, "detail": "Civil unrest over wheat inflation"},
+            {"lat": 32.5, "lng": 74.5, "name": "LoC Ceasefire Violations", "domain": "defence", "sev": 0.82, "detail": "17 incidents in Feb 2026"}
+        ]
+
+# ── FIRMS PROXY ───────────────────────────────────────────────────
+
+@app.get("/api/firms")
+async def get_firms_data():
+    firms_key = os.getenv("VITE_FIRMS_MAP_KEY")
+    if not firms_key:
+        raise HTTPException(500, "FIRMS Map Key not configured in backend .env")
+        
+    url = f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{firms_key}/VIIRS_SNPP_NRT/world/1"
+    try:
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        # Return the CSV text exactly as received
+        return Response(content=r.text, media_type="text/csv")
+    except Exception as e:
+        print(f"FIRMS API Error: {e}")
+        # Return empty CSV string with headers
+        return Response(content="latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,instrument,confidence,version,bright_ti5,frp,daynight", media_type="text/csv")
+
+
 # ── LIVE WEBSOCKET ────────────────────────────────────────────────
+
 
 
 @app.websocket("/ws/live")
