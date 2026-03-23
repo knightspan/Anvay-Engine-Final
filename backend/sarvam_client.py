@@ -1,4 +1,3 @@
-# backend/sarvam_client.py
 import requests, base64, os
 from dotenv import load_dotenv
 
@@ -12,6 +11,7 @@ class SarvamClient:
     def _headers(self):
         return {
             "Authorization": f"Bearer {self.key}",
+            "api-subscription-key": self.key, 
             "Content-Type":  "application/json"
         }
 
@@ -60,12 +60,14 @@ class SarvamClient:
         """Speech to text."""
         if not self.key or self.key == "paste_your_sarvam_key_here":
             return ""
-        headers = {"Authorization": f"Bearer {self.key}"}
+        
+        headers = {"api-subscription-key": self.key}
         files   = {"file": ("audio.wav", audio_bytes, "audio/wav")}
-        data    = {"language_code": language, "model": "saarika:v2"}
+        data    = {"language_code": language, "model": "saarika:v2.5"} 
+        
         try:
             r = requests.post(
-                f"{self.base}/v1/speech-to-text",
+                f"{self.base}/speech-to-text/transcribe",
                 files=files, data=data, headers=headers, timeout=30
             )
             r.raise_for_status()
@@ -74,20 +76,22 @@ class SarvamClient:
             print(f"[Sarvam STT error] {ex}")
             return ""
 
-    def synthesize(self, text: str, language: str = "en-IN") -> bytes:
+    def synthesize(self, text: str, language: str = "hi-IN") -> bytes:
         """Text to speech."""
         if not self.key or self.key == "paste_your_sarvam_key_here":
             return b""
+            
         payload = {
-            "inputs":               [text[:400]],
+            "text": text[:400], 
             "target_language_code": language,
-            "speaker":              "meera",
-            "model":                "bulbul:v2",
+            "speaker": "anushka", 
+            "model": "bulbul:v2",
             "enable_preprocessing": True
         }
+        
         try:
             r = requests.post(
-                f"{self.base}/v1/text-to-speech",
+                f"{self.base}/text-to-speech",
                 json=payload, headers=self._headers(), timeout=30
             )
             r.raise_for_status()
